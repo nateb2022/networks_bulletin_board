@@ -1,3 +1,6 @@
+# THIS FILE IS ABANDONED BECAUSE I SWITCHED TO JAVA
+# DON'T USE THIS FOR ACTUAL REFERENCE I'M BEGGING YOU
+
 from WebServer import HttpRequest
 from socket import *
 
@@ -7,6 +10,8 @@ class Server:
         self.messages = []
 
     def accept_new_connection(self):
+        # parameter thread object
+        # add thread object
         return
 
     def main(self):
