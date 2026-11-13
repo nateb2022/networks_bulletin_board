@@ -31,11 +31,11 @@
 
 ## Server Initiated Communication
 #### These messages will all be sent from the server when initiated by one of the above endpoints
-- Format: xml
-- The xml file will contain two fields:
-  - `type`: `message-header`, `user-connect`, `user-disconnect`
+- Format: json
+- The json file will contain two fields:
+  - `type`: `new-message`, `user-connect`, `user-disconnect`
   - `body`: format depends on the type:
-    - `message-header`: object with fields `message-id`, `sender`, `timestamp`, `subject`
+    - `new-message`: object with fields `message-id`, `sender`, `timestamp`, `subject`
     - `user-connect`: str containing the username
     - `user-disconnect`: str containing the username
 - Server will expect a response of some kind
