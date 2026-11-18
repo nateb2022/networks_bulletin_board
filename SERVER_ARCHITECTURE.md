@@ -1,20 +1,15 @@
 # Server Architecture
 
 ## HTTP Endpoints
+#### NOTE: I know real HTTP stuff uses JSON bodies for POST requests, but that's kind of annoying with the Project 1 framework so query params will be easier for me to process
 - GET /connection
   - Honestly I'm not 100% sure when this one will be called, I'll leave that up to your discretion, Nate
   - No parameters
   - Returns 200 OK with the list of all users currently connected
-- POST /connection
-  - JSON message body has field `username`
-  - Sent when the client connects to the bulletin board
+- POST /connection?username={username}
+  - This is the initial request the client will send when connecting to the server
   - If connection is successful, server sends 201 Created with no body
   - Note that this endpoint will send a notification to all open connections that the new user has joined
-- DELETE /connection
-  - No parameters
-  - Sent when the client disconnects from the bulletin board
-  - If disconnection is successful, server sends 204 No Content
-  - Note that this endpoint will send a notification to all open connections that the user has disconnected
 - GET /messages
   - No parameters
   - Sent after 200 response from POST /connection, requests 2 most recent messages
@@ -23,8 +18,9 @@
   - Sent when the user requests a specific message body
   - Returns 200 OK with the requested message body
   - If the id doesn't exist, returns a 404 Not Found
-- POST /messages
-  - Body is JSON object with fields `sender`, `subject`, and `body`
+- POST /messages?sender={sender}&subject={subject}&body={body}
+  - Honestly this one's kinda fucked, sending the body in the URI but it'll get the job done LMAO
+  - body MUST be the last param
   - Sent when user posts a new message to the board
   - Returns 201 Created with the message's ID
   - Note that this endpoint will send the created message to all currently open connections, **including the one that made the post**
