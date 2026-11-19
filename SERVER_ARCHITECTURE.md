@@ -2,28 +2,63 @@
 
 ## HTTP Endpoints
 #### NOTE: I know real HTTP stuff uses JSON bodies for POST requests, but that's kind of annoying with the Project 1 framework so query params will be easier for me to process
-- GET /connection
-  - Honestly I'm not 100% sure when this one will be called, I'll leave that up to your discretion, Nate
-  - No parameters
+- GET /connection?groupId={groupId}
+  - Sent after the user joins a group including the automatic joining of group `0` from POST /connection
   - Returns 200 OK with the list of all users currently connected
 - POST /connection?username={username}
   - This is the initial request the client will send when connecting to the server
   - If connection is successful, server sends 201 Created with no body
-  - Note that this endpoint will send a notification to all open connections that the new user has joined
-- GET /messages
-  - No parameters
-  - Sent after 200 response from POST /connection, requests 2 most recent messages
+  - This will automatically join the user into group `0` (the public group) and send a notification to all users in that group
+- GET /messages?groupId={groupId}
+  - Sent when a user joins a new group, including after POST /connection
   - Returns 200 OK with the 2 most recent messages
-- GET /messages?messageId={messageId}
+  - Example output body:
+  
+  ``` json
+    {
+      "messages": 
+        [
+          {
+            "message-id": 1234,
+            "sender": "Gavin",
+            "timestamp": "2026-11-20T14:46:30Z",
+            "subject": "Example"
+          },
+          {
+            "message-id": 5678,
+            "sender": "Nick",
+            "timestamp": "2026-11-19T14:46:30Z",
+            "subject": "Example 2"
+          }
+       ]
+    }
+  ```
+- GET /messages?groupId={groupId}&messageId={messageId}
   - Sent when the user requests a specific message body
   - Returns 200 OK with the requested message body
   - If the id doesn't exist, returns a 404 Not Found
-- POST /messages?sender={sender}&subject={subject}&body={body}
+- POST /messages?groupId={groupId}&sender={sender}&subject={subject}&body={body}
   - Honestly this one's kinda fucked, sending the body in the URI but it'll get the job done LMAO
-  - body MUST be the last param
+  - subject and body MUST be wrapped in ""
+  - Because of that, if the subject or body contain double quotes or backslashes, they need to be escaped (e.g. subject="he said \"wow\"")
   - Sent when user posts a new message to the board
   - Returns 201 Created with the message's ID
-  - Note that this endpoint will send the created message to all currently open connections, **including the one that made the post**
+  - Note that this endpoint will send the created message to all connections in the group, **including the one that made the post**
+- GET /groups
+  - No parameters
+  - Sent when the user requests the list of groups available to join
+  - Returns 200 OK with a list of groups
+  - Groups that the user is currently in will NOT be included in the returned list
+- POST /groups?groupId={groupId}
+  - Sent when the user joins a group
+  - groupId can be `0`, `1`, `2`, `3`, `4`, `5` (0 is the public group, auto joined on POST /connection)
+  - Returns 201 Created
+  - Note that this will send a notification to all users in the joined group that a new user has joined
+- DELETE /groups?groupId={groupId}
+  - Sent when a user leaves a group
+  - groupId can be `0`, `1`, `2`, `3`, `4`, `5` (0 is the public group, auto joined on POST /connection)
+  - Returns 204 No Content
+  - Note that this will send a notification to all users in the left group that a user left
 
 ## Server Initiated Communication
 #### These messages will all be sent from the server when initiated by one of the above endpoints
@@ -31,7 +66,7 @@
 - The json file will contain two fields:
   - `type`: `new-message`, `user-connect`, `user-disconnect`
   - `body`: format depends on the type:
-    - `new-message`: object with fields `message-id`, `sender`, `timestamp`, `subject`
-    - `user-connect`: str containing the username
-    - `user-disconnect`: str containing the username
+    - `new-message`: object with fields `group-id`, `message-id`, `sender`, `timestamp`, `subject`
+    - `user-connect`: object with fields `group-id`, `username`
+    - `user-disconnect`: object with fields `group-id`, `username`
 - Server will NOT expect a response of any kind. TCP should handle guaranteed delivery here, so shouldn't need ACKs for these

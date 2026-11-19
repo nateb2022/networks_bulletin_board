@@ -30,13 +30,19 @@ final class Message {
     public String body;
 }
 
+final class Group {
+    public List<OpenConnection> connections = new ArrayList<>();
+    public List<Message> messages = new ArrayList<>();
+}
+
 final class OpenConnection implements Runnable {
-    final static String CRLF = "\r\n";
-    static List<Message> messages = new ArrayList<>();
-    static List<Socket> connections = new ArrayList<>();
-    Socket socket;
-    String username;
-    DataOutputStream os;
+    static final String CRLF = "\r\n";
+    static final List<Group> groups = new ArrayList<>(
+            Arrays.asList(new Group(), new Group(), new Group(), new Group(), new Group(), new Group()));
+    private final List<Integer> joinedGroups = new ArrayList<>();
+    private Socket socket;
+    private String username;
+    private DataOutputStream os;
 
     // Constructor
     public OpenConnection(Socket socket) throws Exception {
@@ -51,6 +57,8 @@ final class OpenConnection implements Runnable {
             processRequests();
         } catch (Exception e) {
             System.out.println(e);
+        } finally {
+            handleDisconnect();
         }
     }
 
@@ -60,66 +68,245 @@ final class OpenConnection implements Runnable {
 
         while (true) {
             String requestLine = br.readLine();
-            if (requestLine == null) {   // client disconnected
+            if (requestLine == null)   // client disconnected
                 break;
+
+            // Ignore any extra headers
+            String header = br.readLine();
+            while (!(header == null || header.equals(""))) {
+                header = br.readLine();
             }
 
-            // Extract the filename from the request line.
-            handleRequest(requestLine);
-
-            while (!br.nextLine().equals("")) {}
-
+            try {
+                ParsedRequest request = new ParsedRequest(requestLine);
+                handleRequest(request);
+            } catch (BadRequestException e) {
+                handleBadRequest();
+            }
         }
         br.close();
-        handleDisconnect();
     }
 
-    private void handleRequest(String requestLine) {
-        StringTokenizer tokens = new StringTokenizer(requestLine, " ?=&");
-        String method = tokens.nextToken();
-        String fileName = tokens.nextToken();
-
-        switch(fileName) {
+    private void handleRequest(ParsedRequest request) throws Exception {
+        switch(request.path) {
             case "/messages":
-                switch (method) {
+                switch (request.method) {
                     case "GET":
-                        if (tokens.nextToken().equals("messageId"))
-                            getMessageById(tokens.nextToken());
+                        String messageId = request.get("messageId");
+                        if (messageId != null)
+                            getMessageById(request.require("groupId"), messageId);
                         else
-                            getMostRecentMessages();
+                            getMostRecentMessages(request.require("groupId"));
                         break;
                     case "POST":
-                        addNewMessage(requestLine);
+                        addNewMessage(request.require("groupId"), request.require("sender"),  request.require("subject"), request.require("body"));
                         break;
                     default:
-                        handleBadRequest();
+                        throw new BadRequestException();
                 }
                 break;
             case "/connection":
-                switch (method) {
+                switch (request.method) {
                     case "GET":
-                        getUsersConnected();
+                        getUsersConnected(request.require("groupId"));
                         break;
                     case "POST":
-                        if (!tokens.nextToken().equals("username"))
-                            handleBadRequest();
-                        else
-                            addNewConnection(tokens.nextToken());
+                        addNewConnection(request.require("username"));
                         break;
                     default:
-                        handleBadRequest();
+                        throw new BadRequestException();
+                }
+                break;
+            case "/groups":
+                switch (request.method) {
+                    case "GET":
+                        getJoinableGroups();
+                        break;
+                    case "POST":
+                        joinGroup(request.require("groupId"));
+                        break;
+                    case "DELETE":
+                        leaveGroup(request.require("groupId"));
+                        break;
+                    default:
+                        throw new BadRequestException();
                 }
                 break;
             default:
-                handleBadRequest();
+                throw new BadRequestException();
         }
     }
 
-    private void handleBadRequest() {
-        String statusLine = "HTTP/1.0 400 Bad Request" + CRLF;
-        String contentTypeLine = "Content-type: text/plain" + CRLF;
-        this.os.writeBytes(statusLine);
-        this.os.writeBytes(contentTypeLine);
-        this.os.writeBytes(CRLF);
+    private void getMessageById(String rawGroupId, String messageId) {
+        // TODO
+    }
+
+    private void getMostRecentMessages(String rawGroupId) throws Exception {
+        Group group = getJoinedGroup(rawGroupId);
+        String body = "{\"messages\": [";
+        List<Message> messages = group.messages;
+        synchronized (messages) {
+            int len = messages.size();
+            for (int i = 1; i <= 2; i++) {
+                if (len < i)
+                    break;
+                if (i == 2)
+                    body += ",";
+                Message m = messages.get(len - i);
+                body += "{\"message-id\":" + m.messageId + ",";
+                body += "\"sender\":\"" + m.sender + "\",";
+                body += "\"timestamp\":\"" + m.timestamp + "\",";
+                body += "\"subject\":\"" + m.subject + "\"}";
+            }
+        }
+        body += "]}";
+
+        String status = "200 OK";
+        String contentType = "application/json";
+        sendResponse(status, contentType, body);
+    }
+
+    private void addNewMessage(String rawGroupId, String sender,  String subject, String body) {
+        // TODO
+    }
+
+    private void getUsersConnected(String rawGroupId) {
+        // TODO
+    }
+
+    private void addNewConnection(String username) {
+        // TODO
+    }
+
+    private void getJoinableGroups() {
+        // TODO
+    }
+
+    private void joinGroup(String rawGroupId) {
+        // TODO
+    }
+
+    private void leaveGroup(String rawGroupId) {
+        // TODO
+    }
+
+    private void handleBadRequest() throws Exception {
+        String status = "400 Bad Request";
+        String contentType = "text/plain";
+        sendResponse(status, contentType, "");
+    }
+
+    private void sendResponse(String status, String contentType, String body) throws Exception {
+        // Convert once to UTF-8 bytes; the array length is the true Content-Length
+        byte[] bodyBytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        String headers = "HTTP/1.0 " + status + CRLF
+                + "Content-Type: " + contentType + CRLF
+                + "Content-Length: " + bodyBytes.length + CRLF
+                + CRLF;
+        synchronized (os) {
+            os.write(headers.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            os.write(bodyBytes);
+            os.flush();
+        }
+    }
+
+    private void handleDisconnect() {
+        // TODO
+    }
+
+    private Group getJoinedGroup(String rawGroupId) throws BadRequestException {
+        int id;
+        try {
+            id = Integer.valueOf(rawGroupId);
+        } catch (Exception e) {
+            throw new BadRequestException();
+        }
+        if (id < 0 || id > 5)
+            throw new BadRequestException();
+        Group group = groups.get(id);
+        if (!joinedGroups.contains(group))
+            throw new BadRequestException();
+        return group;
+    }
+}
+
+final class BadRequestException extends Exception {}
+
+final class ParsedRequest {
+    final String method;
+    final String path;
+    private final Map<String, String> params = new HashMap<>();
+
+    ParsedRequest(String requestLine) throws BadRequestException {
+        // Method is before the first space; the HTTP version is after the LAST
+        // space. Quoted values may contain spaces, so we can't split on spaces.
+        int firstSpace = requestLine.indexOf(' ');
+        int lastSpace = requestLine.lastIndexOf(' ');
+        if (firstSpace == -1 || lastSpace <= firstSpace
+                || !requestLine.substring(lastSpace + 1).startsWith("HTTP/"))
+            throw new BadRequestException();
+
+        method = requestLine.substring(0, firstSpace);
+        String uri = requestLine.substring(firstSpace + 1, lastSpace).trim();
+
+        // The FIRST '?' separates path from query; later '?'s belong to values.
+        int q = uri.indexOf('?');
+        if (q == -1) {
+            path = uri;
+        } else {
+            path = uri.substring(0, q);
+            parseQuery(uri.substring(q + 1));
+        }
+    }
+
+    // Returns the value, or null if the param wasn't sent.
+    String get(String key) {
+        return params.get(key);
+    }
+
+    // Returns the value, or throws if missing (use for required params).
+    String require(String key) throws BadRequestException {
+        String value = params.get(key);
+        if (value == null)
+            throw new BadRequestException();
+        return value;
+    }
+
+    private void parseQuery(String query) throws BadRequestException {
+        int i = 0;
+        while (i < query.length()) {
+            int eq = query.indexOf('=', i);
+            if (eq == -1)
+                throw new BadRequestException();
+            String key = query.substring(i, eq);
+            i = eq + 1;
+
+            StringBuilder value = new StringBuilder();
+            if (i < query.length() && query.charAt(i) == '"') {
+                // Quoted value: read to the closing quote, so '&', '=' and
+                // spaces inside are preserved. Backslash escapes the next char.
+                i++;
+                boolean closed = false;
+                while (i < query.length()) {
+                    char c = query.charAt(i++);
+                    if (c == '\\' && i < query.length())
+                        value.append(query.charAt(i++));
+                    else if (c == '"') {
+                        closed = true;
+                        break;
+                    } else
+                        value.append(c);
+                }
+                if (!closed || (i < query.length() && query.charAt(i) != '&'))
+                    throw new BadRequestException();
+            } else {
+                // Unquoted value: read to the next '&'.
+                while (i < query.length() && query.charAt(i) != '&')
+                    value.append(query.charAt(i++));
+            }
+            i++; // skip the '&' separator
+            params.put(key, value.toString());
+        }
     }
 }
