@@ -34,8 +34,4 @@
     - `new-message`: object with fields `message-id`, `sender`, `timestamp`, `subject`
     - `user-connect`: str containing the username
     - `user-disconnect`: str containing the username
-- Server will expect a response of some kind
-- Two response types: 
-  - good (matches above format, everything's all good)
-  - bad (format's wrong, either in type or expected body for type, data corrupted in some way)
-- NATE, PLEASE ADD IN THE SPECIFIC FORMAT OF THE RESPONSE. I'll leave it up to you what the easiest way to go about it is on your end, just please put the format here
+- Server will NOT expect a response of any kind. TCP should handle guaranteed delivery here, so shouldn't need ACKs for these

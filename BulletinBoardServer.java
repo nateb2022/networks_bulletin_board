@@ -1,6 +1,7 @@
 import java.io.* ;
 import java.net.* ;
 import java.util.* ;
+import java.time.*;
 
 public final class BulletinBoardServer {
     public static void main(String[] args) throws Exception {
@@ -14,176 +15,111 @@ public final class BulletinBoardServer {
             // Listen for a TCP connection request.
             Socket connection = serverSocket.accept();
 
-            // Construct an object to process the HTTP request message.
-            HttpRequest request = new HttpRequest(connection);
-            // Create a new thread to process the request.
-            Thread thread = new Thread(request);
-            // Start the thread.
+            OpenConnection conn = new OpenConnection(connection);
+            Thread thread = new Thread(conn);
             thread.start();
         }
     }
 }
 
-final class HttpRequest implements Runnable {
+final class Message {
+    public int messageId;
+    public String sender;
+    public Instant timestamp;
+    public String subject;
+    public String body;
+}
+
+final class OpenConnection implements Runnable {
     final static String CRLF = "\r\n";
+    static List<Message> messages = new ArrayList<>();
+    static List<Socket> connections = new ArrayList<>();
     Socket socket;
+    String username;
+    DataOutputStream os;
 
     // Constructor
-    public HttpRequest(Socket socket) throws Exception {
+    public OpenConnection(Socket socket) throws Exception {
         this.socket = socket;
+        this.username = "";
+        this.os = new DataOutputStream(socket.getOutputStream());
     }
 
     // Implement the run() method of the Runnable interface.
     public void run() {
         try {
-            processRequest();
+            processRequests();
         } catch (Exception e) {
             System.out.println(e);
         }
     }
 
-    private void processRequest() throws Exception {
-        // Get a reference to the socket's input and output streams.
+    private void processRequests() throws Exception {
         InputStream is = socket.getInputStream();
-        DataOutputStream os = new DataOutputStream(socket.getOutputStream());
-
-        // Set up input stream filters.
         BufferedReader br = new  BufferedReader(new InputStreamReader(is));
 
         while (true) {
-            // Get the request line of the HTTP request message.
             String requestLine = br.readLine();
-            if (requestLine == null) {   // client connected but sent nothing
+            if (requestLine == null) {   // client disconnected
                 break;
             }
 
-            // Get and display the header lines.
-            String headerLine = null;
-            while ((headerLine = br.readLine()) != null && headerLine.length() != 0) {
-                System.out.println(headerLine);
-            }
-            System.out.println();
-
             // Extract the filename from the request line.
-            StringTokenizer tokens = new StringTokenizer(requestLine);
-            tokens.nextToken(); // skip over the method, which should be "GET"
-            String fileName = tokens.nextToken();
+            handleRequest(requestLine);
 
-            // Prepend a "." so that file request is within the current directory.
-            fileName = "." + fileName;
+            while (!br.nextLine().equals("")) {}
 
-            // Open the requested file.
-            FileInputStream fis = null;
-            boolean fileExists = true;
-            try {
-                fis = new FileInputStream(fileName);
-            } catch (FileNotFoundException e) {
-                fileExists = false;
-            }
-
-            // Construct the response message.
-            String statusLine = null;
-            String contentTypeLine = null;
-            String entityBody = null;
-            if (fileExists) {
-                statusLine = "HTTP/1.0 200 OK" + CRLF;
-                contentTypeLine = "Content-type: " +
-                        contentType(fileName) + CRLF;
-            } else {
-                // if the file requested is any type other than a text (.txt) file, report
-                // error to the web client
-                if (!contentType(fileName).equalsIgnoreCase("text/plain")) {
-                    statusLine = "HTTP/1.0 404 Not Found" + CRLF;
-                    contentTypeLine = "Content-type: text/html" + CRLF;
-                    entityBody = "<HTML>" +
-                            "<HEAD><TITLE>Not Found</TITLE></HEAD>" +
-                            "<BODY>Not Found</BODY></HTML>";
-                } else { // else retrieve the text (.txt) file from your local FTP server
-                    // create an instance of ftp client
-                    FtpClient ftp = new FtpClient();
-                    // connect to the ftp server
-                    ftp.connect("gavin", "1234");
-                    // retrieve the file from the ftp server, remember you need to
-                    // first upload this file to the ftp server under your user
-                    // ftp directory
-                    ftp.getFile(fileName);
-                    // disconnect from ftp server
-                    ftp.disconnect();
-                    // assign input stream to read the recently ftp-downloaded file
-                    try {
-                        // read the recently ftp-downloaded file
-                        fis = new FileInputStream(fileName);
-                        fileExists = true;
-                        statusLine = "HTTP/1.0 200 OK" + CRLF;
-                        contentTypeLine = "Content-type: text/plain" + CRLF;
-                    } catch (FileNotFoundException e) {
-                        // not on the FTP server either
-                        statusLine = "HTTP/1.0 404 Not Found" + CRLF;
-                        contentTypeLine = "Content-type: text/html" + CRLF;
-                        entityBody = "<HTML>" +
-                                "<HEAD><TITLE>Not Found</TITLE></HEAD>" +
-                                "<BODY>Not Found</BODY></HTML>";
-                    }
-                }
-            }
-
-            System.out.println("Response:");
-            System.out.println("------------");
-            System.out.print(statusLine);
-            System.out.print(contentTypeLine);
-            System.out.println();            // blank line ending the headers
-            if (!fileExists) {
-                System.out.println(entityBody);
-            }
-            System.out.println();
-
-            // Send the status line.
-            os.writeBytes(statusLine);
-            // Send the content type line.
-            os.writeBytes(contentTypeLine);
-            // Send a blank line to indicate the end of the header lines.
-            os.writeBytes(CRLF);
-
-            // Send the entity body.
-            if (fileExists) {
-                sendBytes(fis, os);
-                fis.close();
-            } else {
-                os.writeBytes(entityBody);
-            }
         }
-
-        // Close streams and socket.
-        os.close();
         br.close();
-        socket.close();
+        handleDisconnect();
     }
 
-    private static void sendBytes(FileInputStream fis, OutputStream os)
-            throws Exception {
-        // Construct a 1K buffer to hold bytes on their way to the socket.
-        byte[] buffer = new byte[1024];
-        int bytes = 0;
+    private void handleRequest(String requestLine) {
+        StringTokenizer tokens = new StringTokenizer(requestLine, " ?=&");
+        String method = tokens.nextToken();
+        String fileName = tokens.nextToken();
 
-        // Copy requested file into the socket's output stream.
-        while((bytes = fis.read(buffer)) != -1 ) {
-            os.write(buffer, 0, bytes);
+        switch(fileName) {
+            case "/messages":
+                switch (method) {
+                    case "GET":
+                        if (tokens.nextToken().equals("messageId"))
+                            getMessageById(tokens.nextToken());
+                        else
+                            getMostRecentMessages();
+                        break;
+                    case "POST":
+                        addNewMessage(requestLine);
+                        break;
+                    default:
+                        handleBadRequest();
+                }
+                break;
+            case "/connection":
+                switch (method) {
+                    case "GET":
+                        getUsersConnected();
+                        break;
+                    case "POST":
+                        if (!tokens.nextToken().equals("username"))
+                            handleBadRequest();
+                        else
+                            addNewConnection(tokens.nextToken());
+                        break;
+                    default:
+                        handleBadRequest();
+                }
+                break;
+            default:
+                handleBadRequest();
         }
     }
 
-    private static String contentType(String fileName) {
-        if(fileName.endsWith(".htm") || fileName.endsWith(".html")) {
-            return "text/html";
-        }
-        if(fileName.endsWith(".gif")) {
-            return "image/gif";
-        }
-        if(fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) {
-            return "image/jpeg";
-        }
-        if(fileName.endsWith(".txt")) {
-            return "text/plain";
-        }
-        return "application/octet-stream";
+    private void handleBadRequest() {
+        String statusLine = "HTTP/1.0 400 Bad Request" + CRLF;
+        String contentTypeLine = "Content-type: text/plain" + CRLF;
+        this.os.writeBytes(statusLine);
+        this.os.writeBytes(contentTypeLine);
+        this.os.writeBytes(CRLF);
     }
 }
