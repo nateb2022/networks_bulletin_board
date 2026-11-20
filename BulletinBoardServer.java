@@ -39,10 +39,11 @@ final class OpenConnection implements Runnable {
     static final String CRLF = "\r\n";
     static final List<Group> groups = new ArrayList<>(
             Arrays.asList(new Group(), new Group(), new Group(), new Group(), new Group(), new Group()));
-    private final List<Integer> joinedGroups = new ArrayList<>();
+    static final List<String> usernames = new ArrayList<>();
+    private final List<Group> joinedGroups = new ArrayList<>();
     private Socket socket;
-    private String username;
-    private DataOutputStream os;
+    public String username;
+    public DataOutputStream os;
 
     // Constructor
     public OpenConnection(Socket socket) throws Exception {
@@ -142,7 +143,9 @@ final class OpenConnection implements Runnable {
     }
 
     private void getMostRecentMessages(String rawGroupId) throws Exception {
-        Group group = getJoinedGroup(rawGroupId);
+        Group group = getGroup(rawGroupId);
+        if (!joinedGroups.contains(group))
+            throw new BadRequestException();
         String body = "{\"messages\": [";
         List<Message> messages = group.messages;
         synchronized (messages) {
@@ -170,12 +173,34 @@ final class OpenConnection implements Runnable {
         // TODO
     }
 
-    private void getUsersConnected(String rawGroupId) {
-        // TODO
+    private void getUsersConnected(String rawGroupId) throws Exception {
+        Group group = getGroup(rawGroupId);
+        if (!joinedGroups.contains(group))
+            throw new BadRequestException();
+        List<String> usernameList = new ArrayList<>();
+        synchronized (group.connections) {
+            for (OpenConnection connection : group.connections) {
+                usernameList.add(connection.username);
+            }
+        }
+
+        String body = "{ \"users\": [\"" + String.join("\", \"", usernameList) + "\"]}";
+        sendResponse("200 OK", "application/json", body);
     }
 
-    private void addNewConnection(String username) {
-        // TODO
+    private void addNewConnection(String username) throws Exception{
+        synchronized (usernames) {
+            if (usernames.contains(username))
+                throw new BadRequestException();
+            usernames.add(username);
+        }
+        this.username = username;
+        Group publicGroup = groups.get(0);
+        synchronized (publicGroup.connections) {
+            publicGroup.connections.add(this);
+        }
+        sendResponse("201 Created", "text/plain", "");
+        sendUserConnectNotif(username, publicGroup);
     }
 
     private void getJoinableGroups() {
@@ -191,9 +216,7 @@ final class OpenConnection implements Runnable {
     }
 
     private void handleBadRequest() throws Exception {
-        String status = "400 Bad Request";
-        String contentType = "text/plain";
-        sendResponse(status, contentType, "");
+        sendResponse("400 Bad Request", "text/plain", "");
     }
 
     private void sendResponse(String status, String contentType, String body) throws Exception {
@@ -211,11 +234,24 @@ final class OpenConnection implements Runnable {
         }
     }
 
+    private void sendUserConnectNotif(String username, Group group) throws Exception {
+        String notif = "{\"type\": \"user-connect\", \"body\": {\"group\": " +
+                groups.indexOf(group) + ", \"username\": \"" + username + "\"}}";
+        synchronized (group.connections) {
+            for (OpenConnection connection : group.connections) {
+                synchronized (connection.os) {
+                    connection.os.write(notif.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    connection.os.flush();
+                }
+            }
+        }
+    }
+
     private void handleDisconnect() {
         // TODO
     }
 
-    private Group getJoinedGroup(String rawGroupId) throws BadRequestException {
+    private Group getGroup(String rawGroupId) throws BadRequestException {
         int id;
         try {
             id = Integer.valueOf(rawGroupId);
@@ -225,8 +261,6 @@ final class OpenConnection implements Runnable {
         if (id < 0 || id > 5)
             throw new BadRequestException();
         Group group = groups.get(id);
-        if (!joinedGroups.contains(group))
-            throw new BadRequestException();
         return group;
     }
 }

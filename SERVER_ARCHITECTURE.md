@@ -8,7 +8,7 @@
 - POST /connection?username={username}
   - This is the initial request the client will send when connecting to the server
   - If connection is successful, server sends 201 Created with no body
-  - This will automatically join the user into group `0` (the public group) and send a notification to all users in that group
+  - This will automatically join the user into group `0` (the public group) and send a notification to all users in that group **including the user that just joined**
 - GET /messages?groupId={groupId}
   - Sent when a user joins a new group, including after POST /connection
   - Returns 200 OK with the 2 most recent messages
@@ -53,7 +53,7 @@
   - Sent when the user joins a group
   - groupId can be `0`, `1`, `2`, `3`, `4`, `5` (0 is the public group, auto joined on POST /connection)
   - Returns 201 Created
-  - Note that this will send a notification to all users in the joined group that a new user has joined
+  - Note that this will send a notification to all users in the joined group that a new user has joined **including the user that just joined**
 - DELETE /groups?groupId={groupId}
   - Sent when a user leaves a group
   - groupId can be `0`, `1`, `2`, `3`, `4`, `5` (0 is the public group, auto joined on POST /connection)
