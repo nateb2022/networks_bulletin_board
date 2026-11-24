@@ -180,7 +180,7 @@ final class OpenConnection implements Runnable {
         sendResponse("200 OK", "application/json", body);
     }
 
-    private void addNewMessage(String rawGroupId, String subject, String body) throws Exception{
+    private void addNewMessage(String rawGroupId, String subject, String body) throws Exception {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
@@ -213,7 +213,7 @@ final class OpenConnection implements Runnable {
         sendResponse("200 OK", "application/json", body);
     }
 
-    private void addNewConnection(String username) throws Exception{
+    private void addNewConnection(String username) throws Exception {
         if (this.username != null)
             throw new BadRequestException("Already connected");
         if (username.length() == 0)
@@ -224,16 +224,12 @@ final class OpenConnection implements Runnable {
             usernames.add(username);
         }
         this.username = username;
-        Group publicGroup = groups.get(0);
-        synchronized (publicGroup.connections) {
-            publicGroup.connections.add(this);
-        }
-        joinedGroups.add(publicGroup);
-        sendResponse("201 Created", "text/plain", "");
-        sendUserConnectNotif(username, publicGroup);
+
+        // Sends response and notification
+        joinGroup("0");
     }
 
-    private void getJoinableGroups() {
+    private void getJoinableGroups() throws Exception {
         List<Group> joinableGroups = new ArrayList<>(Arrays.listOf(0, 1, 2, 3, 4, 5));
         for (int i = 0; i < 6; i++) {
             Group group = groups.get(i);
@@ -244,8 +240,16 @@ final class OpenConnection implements Runnable {
         sendResponse("200 OK", "application/json", body);
     }
 
-    private void joinGroup(String rawGroupId) {
-        // TODO
+    private void joinGroup(String rawGroupId) throws Exception {
+        Group group = getGroup(rawGroupId);
+        if (joinedGroups.contains(group))
+            throw new BadRequestException("Already in group");
+        joinedGroups.add(group);
+        synchronized(group.connections) {
+            group.connections.add(this);
+        }
+        sendResponse("201 Created", "text/plain", "");
+        sendUserConnectNotif(username, group);
     }
 
     private void leaveGroup(String rawGroupId) {
@@ -257,7 +261,7 @@ final class OpenConnection implements Runnable {
         sendResponse("400 Bad Request", "application/json", body);
     }
 
-    private void sendUserConnectNotif(String username, Group group) throws Exception {
+    private void sendUserConnectNotif(String username, Group group) {
         String notif =
             "{" +
                 "\"type\": \"user-connect\", " +
