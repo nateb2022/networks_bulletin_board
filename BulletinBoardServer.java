@@ -141,6 +141,7 @@ final class OpenConnection implements Runnable {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
+
         String body = "{\"message\": \"";
         List<Message> messages = group.messages;
         synchronized (messages) {
@@ -159,6 +160,7 @@ final class OpenConnection implements Runnable {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
+
         String body = "{\"messages\": [";
         List<Message> messages = group.messages;
         synchronized (messages) {
@@ -184,6 +186,7 @@ final class OpenConnection implements Runnable {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
+
         Message message = new Message();
         message.sender = this.username;
         message.body = body;
@@ -194,6 +197,7 @@ final class OpenConnection implements Runnable {
             message.messageId = messages.size();
             messages.add(message);
         }
+
         sendResponse("201 Created", "text/plain", "");
         sendNewMessageNotif(message);
     }
@@ -202,6 +206,7 @@ final class OpenConnection implements Runnable {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
+
         List<String> usernameList = new ArrayList<>();
         synchronized (group.connections) {
             for (OpenConnection connection : group.connections) {
@@ -218,6 +223,7 @@ final class OpenConnection implements Runnable {
             throw new BadRequestException("Already connected");
         if (username.length() == 0)
             throw new BadRequestException("Username must not be blank");
+
         synchronized (usernames) {
             if (usernames.contains(username))
                 throw new BadRequestException("Username already taken");
@@ -236,6 +242,7 @@ final class OpenConnection implements Runnable {
             if (joinedGroups.contains(group))
                 joinableGroups.remove(joinableGroups.indexOf(group));
         }
+
         String body = "\"groups\": [" + String.join(", ", joinableGroups) + "]}";
         sendResponse("200 OK", "application/json", body);
     }
@@ -244,16 +251,28 @@ final class OpenConnection implements Runnable {
         Group group = getGroup(rawGroupId);
         if (joinedGroups.contains(group))
             throw new BadRequestException("Already in group");
+
         joinedGroups.add(group);
         synchronized(group.connections) {
             group.connections.add(this);
         }
+
         sendResponse("201 Created", "text/plain", "");
-        sendUserConnectNotif(username, group);
+        sendUserConnectNotif(group);
     }
 
     private void leaveGroup(String rawGroupId) {
-        // TODO
+        Group group = getGroup(rawGroupId);
+        if (!joinedGroups.contains(group))
+            throw new BadRequestException("Not in requested group");
+
+        joinedGroups.remove(joinedGroups.indexOf(group));
+        synchronized(group.connections) {
+            group.connections.remove(group.connections.indexOf(this));
+        }
+
+        sendResponse("204 No Content", "text/plain", "");
+        sendUserDisconnectNotif(group);
     }
 
     private void handleBadRequest(Exception e) throws Exception {
@@ -261,10 +280,22 @@ final class OpenConnection implements Runnable {
         sendResponse("400 Bad Request", "application/json", body);
     }
 
-    private void sendUserConnectNotif(String username, Group group) {
+    private void sendUserConnectNotif(Group group) {
         String notif =
             "{" +
                 "\"type\": \"user-connect\", " +
+                "\"body\": {" +
+                    "\"group-id\": " + groups.indexOf(group) + ", " +
+                    "\"username\": \"" + escapeJson(username) + "\"" +
+                "}" +
+            "}" + CRLF;
+        notifyAllGroupMembers(group, notif);
+    }
+
+    private void sendUserDisconnectNotif(Group group) {
+        String notif =
+            "{" +
+                "\"type\": \"user-disconnect\", " +
                 "\"body\": {" +
                     "\"group-id\": " + groups.indexOf(group) + ", " +
                     "\"username\": \"" + escapeJson(username) + "\"" +
@@ -289,7 +320,19 @@ final class OpenConnection implements Runnable {
     }
 
     private void handleDisconnect() {
-        // TODO
+        for (Group group : joinedGroups) {
+            synchronized (group.connections) {
+                group.connections.remove(group.connections.indexOf(this));
+            }
+            sendUserDisconnectNotif(group);
+        }
+
+        synchronized (usernames) {
+            usernames.remove(usernames.indexOf(username));
+        }
+
+        os.close();
+        socket.close();
     }
 
     private void sendResponse(String status, String contentType, String body) throws Exception {
