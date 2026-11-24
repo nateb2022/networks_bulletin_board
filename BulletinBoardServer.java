@@ -81,7 +81,7 @@ final class OpenConnection implements Runnable {
                 ParsedRequest request = new ParsedRequest(requestLine);
                 handleRequest(request);
             } catch (BadRequestException e) {
-                handleBadRequest();
+                handleBadRequest(e);
             }
         }
         br.close();
@@ -102,7 +102,7 @@ final class OpenConnection implements Runnable {
                         addNewMessage(request.require("groupId"), request.require("subject"), request.require("body"));
                         break;
                     default:
-                        throw new BadRequestException();
+                        throw new BadRequestException(request.method + " " +  request.path + " does not exist");
                 }
                 break;
             case "/connection":
@@ -114,7 +114,7 @@ final class OpenConnection implements Runnable {
                         addNewConnection(request.require("username"));
                         break;
                     default:
-                        throw new BadRequestException();
+                        throw new BadRequestException(request.method + " " +  request.path + " does not exist");
                 }
                 break;
             case "/groups":
@@ -129,18 +129,18 @@ final class OpenConnection implements Runnable {
                         leaveGroup(request.require("groupId"));
                         break;
                     default:
-                        throw new BadRequestException();
+                        throw new BadRequestException(request.method + " " +  request.path + " does not exist");
                 }
                 break;
             default:
-                throw new BadRequestException();
+                throw new BadRequestException(request.method + " " +  request.path + " does not exist");
         }
     }
 
     private void getMessageById(String rawGroupId, String messageId) throws Exception {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
-            throw new BadRequestException();
+            throw new BadRequestException("Not in requested group");
         String body = "{\"message\": \"";
         List<Message> messages = group.messages;
         synchronized (messages) {
@@ -152,13 +152,13 @@ final class OpenConnection implements Runnable {
                 }
             }
         }
-        throw new BadRequestException();
+        throw new BadRequestException("Message does not exist");
     }
 
     private void getMostRecentMessages(String rawGroupId) throws Exception {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
-            throw new BadRequestException();
+            throw new BadRequestException("Not in requested group");
         String body = "{\"messages\": [";
         List<Message> messages = group.messages;
         synchronized (messages) {
@@ -183,7 +183,7 @@ final class OpenConnection implements Runnable {
     private void addNewMessage(String rawGroupId, String subject, String body) throws Exception{
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
-            throw new BadRequestException();
+            throw new BadRequestException("Not in requested group");
         Message message = new Message();
         message.sender = this.username;
         message.body = body;
@@ -201,7 +201,7 @@ final class OpenConnection implements Runnable {
     private void getUsersConnected(String rawGroupId) throws Exception {
         Group group = getGroup(rawGroupId);
         if (!joinedGroups.contains(group))
-            throw new BadRequestException();
+            throw new BadRequestException("Not in requested group");
         List<String> usernameList = new ArrayList<>();
         synchronized (group.connections) {
             for (OpenConnection connection : group.connections) {
@@ -214,11 +214,13 @@ final class OpenConnection implements Runnable {
     }
 
     private void addNewConnection(String username) throws Exception{
-        if (this.username != null || username.length() == 0)
-            throw new BadRequestException();
+        if (this.username != null)
+            throw new BadRequestException("Already connected");
+        if (username.length() == 0)
+            throw new BadRequestException("Username must not be blank");
         synchronized (usernames) {
             if (usernames.contains(username))
-                throw new BadRequestException();
+                throw new BadRequestException("Username already taken");
             usernames.add(username);
         }
         this.username = username;
@@ -232,7 +234,14 @@ final class OpenConnection implements Runnable {
     }
 
     private void getJoinableGroups() {
-        // TODO
+        List<Group> joinableGroups = new ArrayList<>(Arrays.listOf(0, 1, 2, 3, 4, 5));
+        for (int i = 0; i < 6; i++) {
+            Group group = groups.get(i);
+            if (joinedGroups.contains(group))
+                joinableGroups.remove(joinableGroups.indexOf(group));
+        }
+        String body = "\"groups\": [" + String.join(", ", joinableGroups) + "]}";
+        sendResponse("200 OK", "application/json", body);
     }
 
     private void joinGroup(String rawGroupId) {
@@ -243,8 +252,9 @@ final class OpenConnection implements Runnable {
         // TODO
     }
 
-    private void handleBadRequest() throws Exception {
-        sendResponse("400 Bad Request", "text/plain", "");
+    private void handleBadRequest(Exception e) throws Exception {
+        String body = "{\"message\": \"" + escapeJson(e.message) + "\"}";
+        sendResponse("400 Bad Request", "application/json", body);
     }
 
     private void sendUserConnectNotif(String username, Group group) throws Exception {
@@ -317,10 +327,10 @@ final class OpenConnection implements Runnable {
         try {
             id = Integer.valueOf(rawGroupId);
         } catch (Exception e) {
-            throw new BadRequestException();
+            throw new BadRequestException("Group id must be integer");
         }
         if (id < 0 || id > 5)
-            throw new BadRequestException();
+            throw new BadRequestException("Group does not exist");
         Group group = groups.get(id);
         return group;
     }
@@ -352,7 +362,13 @@ final class OpenConnection implements Runnable {
     }
 }
 
-final class BadRequestException extends Exception {}
+final class BadRequestException extends Exception {
+    String message;
+
+    BadRequestException(String message) {
+        this.message = message;
+    }
+}
 
 final class ParsedRequest {
     final String method;
@@ -366,7 +382,7 @@ final class ParsedRequest {
         int lastSpace = requestLine.lastIndexOf(' ');
         if (firstSpace == -1 || lastSpace <= firstSpace
                 || !requestLine.substring(lastSpace + 1).startsWith("HTTP/"))
-            throw new BadRequestException();
+            throw new BadRequestException("HTTP request must start with \"HTTP/\"");
 
         method = requestLine.substring(0, firstSpace);
         String uri = requestLine.substring(firstSpace + 1, lastSpace).trim();
@@ -390,7 +406,7 @@ final class ParsedRequest {
     String require(String key) throws BadRequestException {
         String value = params.get(key);
         if (value == null)
-            throw new BadRequestException();
+            throw new BadRequestException("Missing required parameter: " + key);
         return value;
     }
 
@@ -399,7 +415,7 @@ final class ParsedRequest {
         while (i < query.length()) {
             int eq = query.indexOf('=', i);
             if (eq == -1)
-                throw new BadRequestException();
+                throw new BadRequestException("Param missing value");
             String key = query.substring(i, eq);
             i = eq + 1;
 
@@ -420,7 +436,7 @@ final class ParsedRequest {
                         value.append(c);
                 }
                 if (!closed || (i < query.length() && query.charAt(i) != '&'))
-                    throw new BadRequestException();
+                    throw new BadRequestException("TO CLAUDE: tell me what to put here");
             } else {
                 // Unquoted value: read to the next '&'.
                 while (i < query.length() && query.charAt(i) != '&')
