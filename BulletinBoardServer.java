@@ -48,7 +48,6 @@ final class OpenConnection implements Runnable {
     // Constructor
     public OpenConnection(Socket socket) throws Exception {
         this.socket = socket;
-        this.username = "";
         this.os = new DataOutputStream(socket.getOutputStream());
     }
 
@@ -100,7 +99,7 @@ final class OpenConnection implements Runnable {
                             getMostRecentMessages(request.require("groupId"));
                         break;
                     case "POST":
-                        addNewMessage(request.require("groupId"), request.require("sender"),  request.require("subject"), request.require("body"));
+                        addNewMessage(request.require("groupId"), request.require("subject"), request.require("body"));
                         break;
                     default:
                         throw new BadRequestException();
@@ -138,8 +137,22 @@ final class OpenConnection implements Runnable {
         }
     }
 
-    private void getMessageById(String rawGroupId, String messageId) {
-        // TODO
+    private void getMessageById(String rawGroupId, String messageId) throws Exception {
+        Group group = getGroup(rawGroupId);
+        if (!joinedGroups.contains(group))
+            throw new BadRequestException();
+        String body = "{\"message\": \"";
+        List<Message> messages = group.messages;
+        synchronized (messages) {
+            for (Message message : messages) {
+                if (message.messageId == messageId) {
+                    body += escapeJson(message.body) + "\"}";
+                    sendResponse("200 OK", "application/json", body);
+                    return;
+                }
+            }
+        }
+        throw new BadRequestException();
     }
 
     private void getMostRecentMessages(String rawGroupId) throws Exception {
@@ -157,20 +170,31 @@ final class OpenConnection implements Runnable {
                     body += ",";
                 Message m = messages.get(len - i);
                 body += "{\"message-id\":" + m.messageId + ",";
-                body += "\"sender\":\"" + m.sender + "\",";
+                body += "\"sender\":\"" + escapeJson(m.sender) + "\",";
                 body += "\"timestamp\":\"" + m.timestamp + "\",";
-                body += "\"subject\":\"" + m.subject + "\"}";
+                body += "\"subject\":\"" + escapeJson(m.subject) + "\"}";
             }
         }
         body += "]}";
 
-        String status = "200 OK";
-        String contentType = "application/json";
-        sendResponse(status, contentType, body);
+        sendResponse("200 OK", "application/json", body);
     }
 
-    private void addNewMessage(String rawGroupId, String sender,  String subject, String body) {
-        // TODO
+    private void addNewMessage(String rawGroupId, String subject, String body) throws Exception{
+        Group group = getGroup(rawGroupId);
+        if (!joinedGroups.contains(group))
+            throw new BadRequestException();
+        Message message = new Message();
+        message.sender = this.username;
+        message.body = body;
+        message.subject = subject;
+        message.timestamp = Instant.now();
+        List<Message> messages = group.messages;
+        synchronized (messages) {
+            message.messageId = messages.size();
+            messages.add(message);
+        }
+        sendResponse("201 Created", "text/plain", "");
     }
 
     private void getUsersConnected(String rawGroupId) throws Exception {
@@ -180,7 +204,7 @@ final class OpenConnection implements Runnable {
         List<String> usernameList = new ArrayList<>();
         synchronized (group.connections) {
             for (OpenConnection connection : group.connections) {
-                usernameList.add(connection.username);
+                usernameList.add(escapeJson(connection.username));
             }
         }
 
@@ -189,6 +213,8 @@ final class OpenConnection implements Runnable {
     }
 
     private void addNewConnection(String username) throws Exception{
+        if (this.username != null || username.length() == 0)
+            throw new BadRequestException();
         synchronized (usernames) {
             if (usernames.contains(username))
                 throw new BadRequestException();
@@ -199,6 +225,7 @@ final class OpenConnection implements Runnable {
         synchronized (publicGroup.connections) {
             publicGroup.connections.add(this);
         }
+        joinedGroups.add(publicGroup);
         sendResponse("201 Created", "text/plain", "");
         sendUserConnectNotif(username, publicGroup);
     }
@@ -235,13 +262,17 @@ final class OpenConnection implements Runnable {
     }
 
     private void sendUserConnectNotif(String username, Group group) throws Exception {
-        String notif = "{\"type\": \"user-connect\", \"body\": {\"group\": " +
-                groups.indexOf(group) + ", \"username\": \"" + username + "\"}}";
+        String notif = "{\"type\": \"user-connect\", \"body\": {\"group-id\": " +
+                groups.indexOf(group) + ", \"username\": \"" + escapeJson(username) + "\"}}" + CRLF;
         synchronized (group.connections) {
             for (OpenConnection connection : group.connections) {
                 synchronized (connection.os) {
-                    connection.os.write(notif.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    connection.os.flush();
+                    try {
+                        connection.os.write(notif.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        connection.os.flush();
+                    } catch (Exception e) {
+                        System.out.println(e);
+                    }
                 }
             }
         }
@@ -262,6 +293,32 @@ final class OpenConnection implements Runnable {
             throw new BadRequestException();
         Group group = groups.get(id);
         return group;
+    }
+
+    private static String escapeJson(String input) {
+        StringBuilder ret = new StringBuilder();
+        for (char c : input.toCharArray()) {
+            switch (c) {
+                case '"':
+                    ret.append("\\\"");
+                    break;
+                case '\\':
+                    ret.append("\\\\");
+                    break;
+                case '\n':
+                    ret.append("\\n");
+                    break;
+                case '\r':
+                    ret.append("\\r");
+                    break;
+                case '\t':
+                    ret.append("\\t");
+                    break;
+                default:
+                    ret.append(c);
+            }
+        }
+        return ret.toString();
     }
 }
 

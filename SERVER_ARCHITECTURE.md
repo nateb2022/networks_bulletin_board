@@ -37,7 +37,7 @@
   - Sent when the user requests a specific message body
   - Returns 200 OK with the requested message body
   - If the id doesn't exist, returns a 404 Not Found
-- POST /messages?groupId={groupId}&sender={sender}&subject={subject}&body={body}
+- POST /messages?groupId={groupId}&subject={subject}&body={body}
   - Honestly this one's kinda fucked, sending the body in the URI but it'll get the job done LMAO
   - subject and body MUST be wrapped in ""
   - Because of that, if the subject or body contain double quotes or backslashes, they need to be escaped (e.g. subject="he said \"wow\"")
