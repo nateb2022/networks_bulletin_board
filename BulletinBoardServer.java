@@ -195,6 +195,7 @@ final class OpenConnection implements Runnable {
             messages.add(message);
         }
         sendResponse("201 Created", "text/plain", "");
+        sendNewMessageNotif(message);
     }
 
     private void getUsersConnected(String rawGroupId) throws Exception {
@@ -246,6 +247,37 @@ final class OpenConnection implements Runnable {
         sendResponse("400 Bad Request", "text/plain", "");
     }
 
+    private void sendUserConnectNotif(String username, Group group) throws Exception {
+        String notif =
+            "{" +
+                "\"type\": \"user-connect\", " +
+                "\"body\": {" +
+                    "\"group-id\": " + groups.indexOf(group) + ", " +
+                    "\"username\": \"" + escapeJson(username) + "\"" +
+                "}" +
+            "}" + CRLF;
+        notifyAllGroupMembers(group, notif);
+    }
+
+    private void sendNewMessageNotif(Group group, Message message) {
+        String notif =
+            "{" +
+                "\"type\": \"new-message\", " +
+                "\"body\": {" +
+                    "\"group-id\": " + groups.indexOf(group) + ", " +
+                    "\"message-id\": " + message.messageId + ", " +
+                    "\"sender\": \"" + escapeJson(username) + "\", " +
+                    "\"timestamp\": \"" + message.timestamp + "\", " +
+                    "\"subject\": \"" + escapeJson(message.subject) + "\"" +
+                "}" +
+            "}" + CRLF;
+        notifyAllGroupMembers(group, notif);
+    }
+
+    private void handleDisconnect() {
+        // TODO
+    }
+
     private void sendResponse(String status, String contentType, String body) throws Exception {
         // Convert once to UTF-8 bytes; the array length is the true Content-Length
         byte[] bodyBytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -261,25 +293,23 @@ final class OpenConnection implements Runnable {
         }
     }
 
-    private void sendUserConnectNotif(String username, Group group) throws Exception {
-        String notif = "{\"type\": \"user-connect\", \"body\": {\"group-id\": " +
-                groups.indexOf(group) + ", \"username\": \"" + escapeJson(username) + "\"}}" + CRLF;
+    private static void notifyAllGroupMembers(Group group, String notif) {
         synchronized (group.connections) {
             for (OpenConnection connection : group.connections) {
-                synchronized (connection.os) {
-                    try {
-                        connection.os.write(notif.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                        connection.os.flush();
-                    } catch (Exception e) {
-                        System.out.println(e);
-                    }
-                }
+                sendNotification(connection.os, notif);
             }
         }
     }
 
-    private void handleDisconnect() {
-        // TODO
+    private static void sendNotification(DataOutputStream os, String notif) {
+        synchronized (os) {
+            try {
+                os.write(notif.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                os.flush();
+            } catch (Exception e) {
+                System.out.println(e);
+            }
+        }
     }
 
     private Group getGroup(String rawGroupId) throws BadRequestException {
