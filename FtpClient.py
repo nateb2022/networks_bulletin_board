@@ -1,6 +1,11 @@
 import re
 import socket
 
+
+
+# THIS FILE IS REFERENCE TO PROJECT 1. NOT IN USE
+
+
 """
 This is the main FTP client. Study the code and figure out what
 each function does before adding to it. You only need to add code
