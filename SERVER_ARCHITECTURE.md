@@ -1,16 +1,21 @@
 # Server Architecture
 
+### Note that all JSON bodies will be sent as ONE LINE
+
 ## HTTP Endpoints
 #### NOTE: I know real HTTP stuff uses JSON bodies for POST requests, but that's kind of annoying with the Project 1 framework so query params will be easier for me to process
-- GET /connection?groupId={groupId}
+#### Error responses will all be 400 Bad Request with message body (example: `{"message": "Group does not exist"}`)
+- GET /connection?group={group}
   - Sent after the user joins a group including the automatic joining of group `0` from POST /connection
+  - group param can be name or id
   - Returns 200 OK with the list of all users currently connected
 - POST /connection?username={username}
   - This is the initial request the client will send when connecting to the server
   - If connection is successful, server sends 201 Created with no body
   - This will automatically join the user into group `0` (the public group) and send a notification to all users in that group **including the user that just joined**
-- GET /messages?groupId={groupId}
+- GET /messages?group={group}
   - Sent when a user joins a new group, including after POST /connection
+  - group param can be name or id
   - Returns 200 OK with the 2 most recent messages
   - Example output body:
   
@@ -33,12 +38,13 @@
        ]
     }
   ```
-- GET /messages?groupId={groupId}&messageId={messageId}
+- GET /messages?group={group}&messageId={messageId}
   - Sent when the user requests a specific message body
+  - group param can be name or id
   - Returns 200 OK with the requested message body
-  - If the id doesn't exist, returns a 404 Not Found
-- POST /messages?groupId={groupId}&subject={subject}&body={body}
+- POST /messages?group={group}&subject={subject}&body={body}
   - Honestly this one's kinda fucked, sending the body in the URI but it'll get the job done LMAO
+  - group param can be name or id
   - subject and body MUST be wrapped in ""
   - Because of that, if the subject or body contain double quotes or backslashes, they need to be escaped (e.g. subject="he said \"wow\"")
   - Sent when user posts a new message to the board
@@ -49,14 +55,30 @@
   - Sent when the user requests the list of groups available to join
   - Returns 200 OK with a list of groups
   - Groups that the user is currently in will NOT be included in the returned list
-- POST /groups?groupId={groupId}
-  - Sent when the user joins a group
-  - groupId can be `0`, `1`, `2`, `3`, `4`, `5` (0 is the public group, auto joined on POST /connection)
+  - Example output body:
+
+  ``` json
+    {
+      "groups": [
+        {
+          "group-id": 0,
+          "name": "Public"
+        },
+        blah blah blah,
+        {
+          "group-id": 5,
+          "name": "Group 5"
+        }
+      ]
+    }
+- POST /groups?group={group}
+  - Sent when the user joins a group by id
+  - group param can be name or id
   - Returns 201 Created
   - Note that this will send a notification to all users in the joined group that a new user has joined **including the user that just joined**
-- DELETE /groups?groupId={groupId}
+- DELETE /groups?group={group}
   - Sent when a user leaves a group
-  - groupId can be `0`, `1`, `2`, `3`, `4`, `5` (0 is the public group, auto joined on POST /connection)
+  - group param can be name or id
   - Returns 204 No Content
   - Note that this will send a notification to all users in the left group that a user left
 
@@ -70,3 +92,4 @@
     - `user-connect`: object with fields `group-id`, `username`
     - `user-disconnect`: object with fields `group-id`, `username`
 - Server will NOT expect a response of any kind. TCP should handle guaranteed delivery here, so shouldn't need ACKs for these
+- Notifications will end with CRLF

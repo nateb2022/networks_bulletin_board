@@ -14,10 +14,17 @@ public final class BulletinBoardServer {
         while (true) {
             // Listen for a TCP connection request.
             Socket connection = serverSocket.accept();
-
-            OpenConnection conn = new OpenConnection(connection);
-            Thread thread = new Thread(conn);
-            thread.start();
+            try {
+                OpenConnection conn = new OpenConnection(connection);
+                new Thread(conn).start();
+            } catch (Exception e) {
+                System.out.println(e);
+                try {
+                    connection.close();
+                } catch (Exception ex) {
+                    System.out.println(ex);
+                }
+            }
         }
     }
 }
@@ -31,14 +38,20 @@ final class Message {
 }
 
 final class Group {
+    public String name;
     public List<OpenConnection> connections = new ArrayList<>();
     public List<Message> messages = new ArrayList<>();
+
+    Group(String name) {
+        this.name = name;
+    }
 }
 
 final class OpenConnection implements Runnable {
     static final String CRLF = "\r\n";
-    static final List<Group> groups = new ArrayList<>(
-            Arrays.asList(new Group(), new Group(), new Group(), new Group(), new Group(), new Group()));
+    static final List<Group> groups = new ArrayList<>(Arrays.asList(
+            new Group("Public"), new Group("Group 1"), new Group("Group 2"), new Group("Group 3"),
+            new Group("Group 4"), new Group("Group 5")));
     static final List<String> usernames = new ArrayList<>();
     private final List<Group> joinedGroups = new ArrayList<>();
     private Socket socket;
@@ -94,12 +107,12 @@ final class OpenConnection implements Runnable {
                     case "GET":
                         String messageId = request.get("messageId");
                         if (messageId != null)
-                            getMessageById(request.require("groupId"), messageId);
+                            getMessageById(request.require("group"), messageId);
                         else
-                            getMostRecentMessages(request.require("groupId"));
+                            getMostRecentMessages(request.require("group"));
                         break;
                     case "POST":
-                        addNewMessage(request.require("groupId"), request.require("subject"), request.require("body"));
+                        addNewMessage(request.require("group"), request.require("subject"), request.require("body"));
                         break;
                     default:
                         throw new BadRequestException(request.method + " " +  request.path + " does not exist");
@@ -108,7 +121,7 @@ final class OpenConnection implements Runnable {
             case "/connection":
                 switch (request.method) {
                     case "GET":
-                        getUsersConnected(request.require("groupId"));
+                        getUsersConnected(request.require("group"));
                         break;
                     case "POST":
                         addNewConnection(request.require("username"));
@@ -123,10 +136,10 @@ final class OpenConnection implements Runnable {
                         getJoinableGroups();
                         break;
                     case "POST":
-                        joinGroup(request.require("groupId"));
+                        joinGroup(request.require("group"));
                         break;
                     case "DELETE":
-                        leaveGroup(request.require("groupId"));
+                        leaveGroup(request.require("group"));
                         break;
                     default:
                         throw new BadRequestException(request.method + " " +  request.path + " does not exist");
@@ -137,10 +150,16 @@ final class OpenConnection implements Runnable {
         }
     }
 
-    private void getMessageById(String rawGroupId, String messageId) throws Exception {
-        Group group = getGroup(rawGroupId);
+    private void getMessageById(String groupParam, String rawMessageId) throws Exception {
+        Group group = getGroup(groupParam);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
+        int messageId;
+        try {
+            messageId = Integer.valueOf(rawMessageId);
+        } catch (Exception e) {
+            throw new BadRequestException("Message ID must be an int");
+        }
 
         String body = "{\"message\": \"";
         List<Message> messages = group.messages;
@@ -156,8 +175,8 @@ final class OpenConnection implements Runnable {
         throw new BadRequestException("Message does not exist");
     }
 
-    private void getMostRecentMessages(String rawGroupId) throws Exception {
-        Group group = getGroup(rawGroupId);
+    private void getMostRecentMessages(String groupParam) throws Exception {
+        Group group = getGroup(groupParam);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
 
@@ -170,11 +189,11 @@ final class OpenConnection implements Runnable {
                     break;
                 if (i == 2)
                     body += ",";
-                Message m = messages.get(len - i);
-                body += "{\"message-id\":" + m.messageId + ",";
-                body += "\"sender\":\"" + escapeJson(m.sender) + "\",";
-                body += "\"timestamp\":\"" + m.timestamp + "\",";
-                body += "\"subject\":\"" + escapeJson(m.subject) + "\"}";
+                Message message = messages.get(len - i);
+                body += "{\"message-id\":" + message.messageId + ",";
+                body += "\"sender\":\"" + escapeJson(message.sender) + "\",";
+                body += "\"timestamp\":\"" + formatTimestamp(message.timestamp) + "\",";
+                body += "\"subject\":\"" + escapeJson(message.subject) + "\"}";
             }
         }
         body += "]}";
@@ -182,8 +201,8 @@ final class OpenConnection implements Runnable {
         sendResponse("200 OK", "application/json", body);
     }
 
-    private void addNewMessage(String rawGroupId, String subject, String body) throws Exception {
-        Group group = getGroup(rawGroupId);
+    private void addNewMessage(String groupParam, String subject, String body) throws Exception {
+        Group group = getGroup(groupParam);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
 
@@ -198,12 +217,13 @@ final class OpenConnection implements Runnable {
             messages.add(message);
         }
 
-        sendResponse("201 Created", "text/plain", "");
-        sendNewMessageNotif(message);
+        String body = "{\"message-id\": \"" + message.messageId + "\"}";
+        sendResponse("201 Created", "application/json", body);
+        sendNewMessageNotif(group, message);
     }
 
-    private void getUsersConnected(String rawGroupId) throws Exception {
-        Group group = getGroup(rawGroupId);
+    private void getUsersConnected(String groupParam) throws Exception {
+        Group group = getGroup(groupParam);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
 
@@ -236,21 +256,23 @@ final class OpenConnection implements Runnable {
     }
 
     private void getJoinableGroups() throws Exception {
-        List<Group> joinableGroups = new ArrayList<>(Arrays.listOf(0, 1, 2, 3, 4, 5));
+        List<String> joinableGroups = new ArrayList<>();
         for (int i = 0; i < 6; i++) {
             Group group = groups.get(i);
-            if (joinedGroups.contains(group))
-                joinableGroups.remove(joinableGroups.indexOf(group));
+            if (!joinedGroups.contains(group))
+                joinableGroups.add(Integer.toString(i));
         }
 
-        String body = "\"groups\": [" + String.join(", ", joinableGroups) + "]}";
+        String body = "{\"groups\": [" + String.join(", ", joinableGroups) + "]}";
         sendResponse("200 OK", "application/json", body);
     }
 
-    private void joinGroup(String rawGroupId) throws Exception {
-        Group group = getGroup(rawGroupId);
+    private void joinGroup(String param) throws Exception {
+        Group group = getGroup(param);
         if (joinedGroups.contains(group))
             throw new BadRequestException("Already in group");
+        if (username == null)
+            throw new BadRequestException("Must send POST /connection before joining a group");
 
         joinedGroups.add(group);
         synchronized(group.connections) {
@@ -261,14 +283,14 @@ final class OpenConnection implements Runnable {
         sendUserConnectNotif(group);
     }
 
-    private void leaveGroup(String rawGroupId) {
-        Group group = getGroup(rawGroupId);
+    private void leaveGroup(String groupParam) throws Exception {
+        Group group = getGroup(groupParam);
         if (!joinedGroups.contains(group))
             throw new BadRequestException("Not in requested group");
 
-        joinedGroups.remove(joinedGroups.indexOf(group));
+        joinedGroups.remove(group);
         synchronized(group.connections) {
-            group.connections.remove(group.connections.indexOf(this));
+            group.connections.remove(this);
         }
 
         sendResponse("204 No Content", "text/plain", "");
@@ -276,7 +298,7 @@ final class OpenConnection implements Runnable {
     }
 
     private void handleBadRequest(Exception e) throws Exception {
-        String body = "{\"message\": \"" + escapeJson(e.message) + "\"}";
+        String body = "{\"message\": \"" + escapeJson(e.getMessage()) + "\"}";
         sendResponse("400 Bad Request", "application/json", body);
     }
 
@@ -312,7 +334,7 @@ final class OpenConnection implements Runnable {
                     "\"group-id\": " + groups.indexOf(group) + ", " +
                     "\"message-id\": " + message.messageId + ", " +
                     "\"sender\": \"" + escapeJson(username) + "\", " +
-                    "\"timestamp\": \"" + message.timestamp + "\", " +
+                    "\"timestamp\": \"" + formatTimestamp(message.timestamp) + "\", " +
                     "\"subject\": \"" + escapeJson(message.subject) + "\"" +
                 "}" +
             "}" + CRLF;
@@ -322,17 +344,19 @@ final class OpenConnection implements Runnable {
     private void handleDisconnect() {
         for (Group group : joinedGroups) {
             synchronized (group.connections) {
-                group.connections.remove(group.connections.indexOf(this));
+                group.connections.remove(this);
             }
             sendUserDisconnectNotif(group);
         }
 
         synchronized (usernames) {
-            usernames.remove(usernames.indexOf(username));
+            usernames.remove(username);
         }
 
-        os.close();
-        socket.close();
+        try {
+            os.close();
+            socket.close();
+        } catch (Exception e) {}
     }
 
     private void sendResponse(String status, String contentType, String body) throws Exception {
@@ -369,17 +393,26 @@ final class OpenConnection implements Runnable {
         }
     }
 
-    private Group getGroup(String rawGroupId) throws BadRequestException {
-        int id;
+    private Group getGroup(String param) throws Exception {
         try {
-            id = Integer.valueOf(rawGroupId);
+            return getGroupById(Integer.valueOf(param));
         } catch (Exception e) {
-            throw new BadRequestException("Group id must be integer");
+            return getGroupByName(param);
         }
+    }
+
+    private Group getGroupById(int id) {
         if (id < 0 || id > 5)
             throw new BadRequestException("Group does not exist");
-        Group group = groups.get(id);
-        return group;
+        return groups.get(i);
+    }
+    
+    private Group getGroupByName(String name) throws Exception {
+        for (Group group : groups) {
+            if (group.name = name)
+                return group;
+        }
+        throw new BadRequestException("Group does not exist");
     }
 
     private static String escapeJson(String input) {
@@ -407,13 +440,16 @@ final class OpenConnection implements Runnable {
         }
         return ret.toString();
     }
+
+    private static String formatTimestamp(Instant timestamp) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd | hh:mm");
+        return formatter.format(timestamp);
+    }
 }
 
 final class BadRequestException extends Exception {
-    String message;
-
     BadRequestException(String message) {
-        this.message = message;
+        super(message);
     }
 }
 
@@ -483,7 +519,7 @@ final class ParsedRequest {
                         value.append(c);
                 }
                 if (!closed || (i < query.length() && query.charAt(i) != '&'))
-                    throw new BadRequestException("TO CLAUDE: tell me what to put here");
+                    throw new BadRequestException("Quoted value is missing its closing quote or has extra characters after it");
             } else {
                 // Unquoted value: read to the next '&'.
                 while (i < query.length() && query.charAt(i) != '&')
